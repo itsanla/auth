@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 
 interface BackupModalProps {
     email: string;
@@ -17,6 +17,21 @@ export default function BackupModal({
 }: BackupModalProps) {
     const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
     const [usedCodes, setUsedCodes] = useState<Set<number>>(new Set());
+    const [isSaving, setIsSaving] = useState(false);
+
+    // Load used codes from API
+    useEffect(() => {
+        if (isOpen) {
+            fetch("/api/used-codes")
+                .then((res) => res.json())
+                .then((data) => {
+                    if (data[email]) {
+                        setUsedCodes(new Set(data[email]));
+                    }
+                })
+                .catch(() => {});
+        }
+    }, [isOpen, email]);
 
     const copyCode = async (code: string, index: number) => {
         try {
@@ -28,16 +43,31 @@ export default function BackupModal({
         }
     };
 
-    const toggleUsed = (index: number) => {
-        setUsedCodes((prev) => {
-            const newSet = new Set(prev);
-            if (newSet.has(index)) {
-                newSet.delete(index);
-            } else {
-                newSet.add(index);
-            }
-            return newSet;
-        });
+    const toggleUsed = async (index: number) => {
+        const newSet = new Set(usedCodes);
+        if (newSet.has(index)) {
+            newSet.delete(index);
+        } else {
+            newSet.add(index);
+        }
+        setUsedCodes(newSet);
+
+        // Save to API + GitHub
+        setIsSaving(true);
+        try {
+            await fetch("/api/used-codes", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    email,
+                    usedIndexes: Array.from(newSet),
+                }),
+            });
+        } catch (error) {
+            console.error("Failed to save:", error);
+        } finally {
+            setIsSaving(false);
+        }
     };
 
     if (!isOpen) return null;
@@ -131,7 +161,7 @@ export default function BackupModal({
 
                 {/* Footer */}
                 <p className="mt-6 text-xs text-gray-500 text-center">
-                    Click on a code to copy it to clipboard
+                    {isSaving ? "Syncing to GitHub..." : "Click on a code to copy it to clipboard"}
                 </p>
             </div>
         </div>
