@@ -1,95 +1,59 @@
 import { NextRequest, NextResponse } from "next/server";
-import fs from "fs";
-import path from "path";
+import { redis } from "@/lib/redis";
+import { verifyToken, AUTH_COOKIE_NAME } from "@/lib/auth";
 
-const FILE_PATH = path.join(process.cwd(), "data", "used-codes.json");
+export async function GET(request: NextRequest) {
+    // Check authentication
+    const token = request.cookies.get(AUTH_COOKIE_NAME)?.value;
+    if (!token || !(await verifyToken(token))) {
+        return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
 
-export async function GET() {
     try {
-        const data = fs.readFileSync(FILE_PATH, "utf-8");
-        return NextResponse.json(JSON.parse(data));
-    } catch {
-        return NextResponse.json({});
+        const keys = await redis.keys("used-codes:*");
+        const data: Record<string, number[]> = {};
+
+        for (const key of keys) {
+            const email = key.replace("used-codes:", "");
+            const indexes = await redis.get<number[]>(key);
+            if (indexes) {
+                data[email] = indexes;
+            }
+        }
+
+        return NextResponse.json(data);
+    } catch (error) {
+        console.error("Redis error:", error);
+        return NextResponse.json({}, { status: 200 }); // Return empty on error
     }
 }
 
 export async function POST(request: NextRequest) {
+    // Check authentication
+    const token = request.cookies.get(AUTH_COOKIE_NAME)?.value;
+    if (!token || !(await verifyToken(token))) {
+        return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
     try {
         const body = await request.json();
         const { email, usedIndexes } = body;
 
-        // Read current data
-        let data: Record<string, number[]> = {};
-        try {
-            data = JSON.parse(fs.readFileSync(FILE_PATH, "utf-8"));
-        } catch {
-            // File doesn't exist, start fresh
+        if (!email || !Array.isArray(usedIndexes)) {
+            return NextResponse.json(
+                { error: "Invalid data" },
+                { status: 400 }
+            );
         }
 
-        // Update data
-        data[email] = usedIndexes;
-
-        // Write to file
-        fs.writeFileSync(FILE_PATH, JSON.stringify(data, null, 2));
-
-        // Commit to GitHub
-        await commitToGitHub(data);
+        await redis.set(`used-codes:${email}`, usedIndexes);
 
         return NextResponse.json({ success: true });
     } catch (error) {
-        console.error("Error:", error);
+        console.error("Redis error:", error);
         return NextResponse.json(
             { error: "Failed to update" },
             { status: 500 }
         );
-    }
-}
-
-async function commitToGitHub(data: Record<string, number[]>) {
-    const token = process.env.GITHUB_TOKEN;
-    const owner = "itsanla";
-    const repo = "auth";
-    const filePath = "data/used-codes.json";
-
-    if (!token) return;
-
-    try {
-        // Get current file SHA
-        const getRes = await fetch(
-            `https://api.github.com/repos/${owner}/${repo}/contents/${filePath}`,
-            {
-                headers: {
-                    Authorization: `Bearer ${token}`,
-                    Accept: "application/vnd.github.v3+json",
-                },
-            }
-        );
-
-        let sha = "";
-        if (getRes.ok) {
-            const fileData = await getRes.json();
-            sha = fileData.sha;
-        }
-
-        // Commit file
-        const content = Buffer.from(JSON.stringify(data, null, 2)).toString("base64");
-        await fetch(
-            `https://api.github.com/repos/${owner}/${repo}/contents/${filePath}`,
-            {
-                method: "PUT",
-                headers: {
-                    Authorization: `Bearer ${token}`,
-                    Accept: "application/vnd.github.v3+json",
-                    "Content-Type": "application/json",
-                },
-                body: JSON.stringify({
-                    message: "Update used backup codes",
-                    content,
-                    sha: sha || undefined,
-                }),
-            }
-        );
-    } catch (error) {
-        console.error("GitHub commit error:", error);
     }
 }

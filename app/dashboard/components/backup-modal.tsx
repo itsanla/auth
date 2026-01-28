@@ -161,7 +161,7 @@ export default function BackupModal({
 
                 {/* Footer */}
                 <p className="mt-6 text-xs text-gray-500 text-center">
-                    {isSaving ? "Syncing to GitHub..." : "Click on a code to copy it to clipboard"}
+                    {isSaving ? "Saving..." : "Click on a code to copy it to clipboard"}
                 </p>
             </div>
         </div>
